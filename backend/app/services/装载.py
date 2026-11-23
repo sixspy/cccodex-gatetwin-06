@@ -1,5 +1,8 @@
 import json
+import sqlite3
+
 from app.db import 连接
+from app.modules import 出站孤儿旁路
 from app.seed import 此刻
 from app.services import 时间, 配对
 
@@ -131,22 +134,29 @@ def 装一批(体: dict) -> dict:
                     (卡号,),
                 ).fetchone()
                 if not 开腿:
-                    conn.execute(
-                        "UPDATE 刷卡点 SET 命运=? WHERE 事件编号=?",
-                        ("已旁路", 事件编号),
-                    )
-                    conn.execute(
-                        "INSERT INTO 旁路匣(原因, 卡号, 事件编号, 载荷, 时刻) VALUES (?,?,?,?,?)",
-                        (
-                            "出站孤儿",
-                            卡号,
-                            事件编号,
-                            json.dumps(ev, ensure_ascii=False),
-                            处理时,
-                        ),
-                    )
+                    # 口径=当场旁路终态：无开腿出站唯一归宿是旁路匣；
+                    # 不写行程、不造虚进、不入任何待配缓冲。
+                    if conn.execute(
+                        "SELECT 1 FROM 旁路匣 WHERE 事件编号=?", (事件编号,)
+                    ).fetchone():
+                        报告["明细"].append({"事件编号": 事件编号, "命运": "幂等跳过"})
+                        continue
+                    try:
+                        出站孤儿旁路.落孤儿旁路(conn, ev, 处理时)
+                    except sqlite3.IntegrityError:
+                        # 并发裁决抢跑：唯一索引兜底，失败语句自动回滚而事务保持，
+                        # 同批此前事件不受影响；本笔幂等跳过，绝不旁路与行程双落
+                        报告["明细"].append({"事件编号": 事件编号, "命运": "幂等跳过-裁决并发"})
+                        continue
                     报告["旁路"] += 1
-                    报告["明细"].append({"事件编号": 事件编号, "命运": "旁路-出站孤儿"})
+                    报告["明细"].append(
+                        {
+                            "事件编号": 事件编号,
+                            "命运": "旁路-出站孤儿",
+                            "处置": "旁路",
+                            "缓冲键": None,
+                        }
+                    )
                     continue
 
                 行程键 = 配对.成对写出站(
@@ -162,7 +172,7 @@ def 装一批(体: dict) -> dict:
             报告["旁路"] += 报告["超时旁路"]
 
         conn.execute(
-            "INSERT INTO 装载批次(编号, 时刻, 报告) VALUES (?,?,?)",
+            "INSERT OR IGNORE INTO 装载批次(编号, 时刻, 报告) VALUES (?,?,?)",
             (批次编号, 此刻(), json.dumps(报告, ensure_ascii=False)),
         )
         conn.commit()

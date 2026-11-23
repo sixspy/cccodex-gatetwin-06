@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import 夹具目录, 连接
+from app.modules import 出站孤儿旁路
 from app.services import 装载, 贯验, 目录
 
 路由 = APIRouter(prefix="/api")
@@ -98,6 +99,20 @@ def 列旁路():
     conn = 连接()
     try:
         return [dict(r) for r in conn.execute("SELECT * FROM 旁路匣 ORDER BY 编号 DESC LIMIT 100")]
+    finally:
+        conn.close()
+
+
+@路由.get("/孤儿出站")
+def 列孤儿出站(卡号: str = "", 事件编号: str = ""):
+    """孤儿出站只读接口（口径=当场旁路终态）。
+
+    每行：卡号、出站事件、处置(旁路)、旁路键、缓冲键(恒 null)、valid。
+    缓冲键恒空用于与「待配缓冲」口径区分——本全局不实现缓冲表。
+    """
+    conn = 连接()
+    try:
+        return 出站孤儿旁路.只读视图(conn, 卡号=卡号, 事件编号=事件编号)
     finally:
         conn.close()
 

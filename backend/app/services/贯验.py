@@ -43,6 +43,36 @@ def 跑贯验() -> dict:
         if 开腿刷 != 开腿数:
             问题.append(f"已开腿刷卡{开腿刷} ≠ 在途开腿{开腿数}")
 
+        # 孤儿出站（口径=当场旁路终态）：旁路行与刷卡命运同成败，禁止无开腿落行程
+        孤儿匣 = conn.execute(
+            "SELECT * FROM 旁路匣 WHERE 原因='出站孤儿'"
+        ).fetchall()
+        孤儿数 = len(孤儿匣)
+        for 匣 in 孤儿匣:
+            刷 = conn.execute(
+                "SELECT * FROM 刷卡点 WHERE 事件编号=?", (匣["事件编号"],)
+            ).fetchone()
+            if not 刷:
+                问题.append(f"孤儿{匣['事件编号']}有旁路行无刷卡点")
+                continue
+            if 刷["命运"] != "已旁路" or 刷["行程键"] != "":
+                问题.append(f"孤儿{匣['事件编号']}刷卡命运非已旁路终态")
+            双落 = conn.execute(
+                "SELECT 1 FROM 行程账 WHERE 出站事件编号=? LIMIT 1", (匣["事件编号"],)
+            ).fetchone()
+            if 双落:
+                问题.append(f"孤儿{匣['事件编号']}旁路与行程双落")
+        # 反向核查：已旁路的出站刷卡必须能在旁路匣找到归宿
+        旁路出站 = conn.execute(
+            "SELECT 事件编号 FROM 刷卡点 WHERE 方向='出站' AND 命运='已旁路'"
+        ).fetchall()
+        for r in 旁路出站:
+            在匣 = conn.execute(
+                "SELECT 1 FROM 旁路匣 WHERE 事件编号=? LIMIT 1", (r["事件编号"],)
+            ).fetchone()
+            if not 在匣:
+                问题.append(f"出站{r['事件编号']}已旁路却无旁路匣行")
+
         通过 = 1 if not 问题 else 0
         说明 = "行程账与刷卡点互证通过" if 通过 else "；".join(问题)[:800]
         conn.execute(
@@ -57,6 +87,7 @@ def 跑贯验() -> dict:
             "行程数": len(行程),
             "开腿数": 开腿数,
             "旁路数": 旁路数,
+            "孤儿出站数": 孤儿数,
             "说明": 说明,
             "问题": 问题,
         }

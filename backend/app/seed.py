@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS 旁路匣 (
   载荷 TEXT NOT NULL,
   时刻 TEXT NOT NULL
 );
+-- 孤儿裁决双落硬闸：同一事件在旁路匣至多一行（缓冲口径不采用，无第二归宿）
+CREATE UNIQUE INDEX IF NOT EXISTS 匣_事件唯一 ON 旁路匣(事件编号) WHERE 事件编号 <> '';
 CREATE TABLE IF NOT EXISTS 行程贯验 (
   编号 INTEGER PRIMARY KEY AUTOINCREMENT,
   时刻 TEXT NOT NULL,
@@ -91,9 +93,16 @@ def 初始化库() -> None:
             "同站进出": "允许",
             "重复进站策略": "旧腿旁路并开新腿",
             "配对策略": "同卡先进后出",
+            "孤儿出站口径": "当场旁路终态",
             "骨架": "刷卡点装载→同卡进站出站成对物化→缺腿异向超时旁路→行程账与刷卡点互证",
         }.items():
             conn.execute("INSERT INTO 站规(键, 值) VALUES (?, ?)", (k, v))
+    else:
+        for k, v in {
+            "孤儿出站口径": "当场旁路终态",
+        }.items():
+            if not conn.execute("SELECT 1 FROM 站规 WHERE 键=?", (k,)).fetchone():
+                conn.execute("INSERT INTO 站规(键, 值) VALUES (?, ?)", (k, v))
     if conn.execute("SELECT COUNT(*) AS c FROM 线路").fetchone()["c"] == 0:
         conn.execute("INSERT INTO 线路(线路键, 名称) VALUES (?, ?)", ("线1", "一号线"))
         for i, (k, n) in enumerate(
